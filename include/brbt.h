@@ -6,6 +6,9 @@
 
 #define BRBT_NA ((unsigned)-1)
 
+struct brbt_tree;
+typedef unsigned node_idx;
+
 enum brbt_node_flags : unsigned char
 {
   BRBT_NODE_FREE = 0b01,
@@ -14,13 +17,11 @@ enum brbt_node_flags : unsigned char
 
 struct brbt_bookkeeping_info
 {
-  unsigned left, right;
-  unsigned parent;
-  bool free, red;
+  node_idx left, right;
+  node_idx parent;
+  node_idx next_free;
+  bool red;
 };
-
-struct brbt_tree;
-typedef unsigned node_idx;
 
 /*
  * NOTE: do not pass any data structure that is aligned to
