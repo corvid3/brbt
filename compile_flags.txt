@@ -1,0 +1,5 @@
+-std=c17
+-Iinclude
+-Iprivate
+-Wall
+-Wextra
