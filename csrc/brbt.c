@@ -150,7 +150,7 @@ node_alloc(struct brbt_tree* tree)
   return h;
 }
 
-static int
+static inline int
 compare(struct brbt_tree* tree, unsigned node, void* key)
 {
   assert(node != BRBT_NA);
