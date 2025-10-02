@@ -170,11 +170,26 @@ compare(struct brbt_tree* tree, node_idx node, void* key)
 
 #define compare(node, key) compare(tree, node, key)
 
+static inline bool
+is_red(struct brbt_tree* tree, node_idx node)
+{
+  assert(tree);
+
+  /* nil nodes considered black */
+  if (node == BRBT_NA)
+    return false;
+
+  return col(node);
+}
+
+#define is_red(x) is_red(tree, x)
+
 static node_idx
 rotate_left(struct brbt_tree* tree, node_idx h)
 {
   assert(tree);
   assert(h != BRBT_NA);
+  assert(is_red(right(h)));
 
   node_idx x = right(h);
   right(h) = left(x);
@@ -189,6 +204,7 @@ rotate_right(struct brbt_tree* tree, node_idx h)
 {
   assert(tree);
   assert(h != BRBT_NA);
+  assert(is_red(left(h)));
 
   node_idx x = left(h);
   left(h) = right(x);
@@ -208,25 +224,13 @@ color_flip(struct brbt_tree* tree, node_idx node)
   assert(node != BRBT_NA);
 
   col(node) = !col(node);
-  col(left(node)) = !col(left(node));
-  col(right(node)) = !col(right(node));
+  if (left(node) != BRBT_NA)
+    col(left(node)) = !col(left(node));
+  if (right(node) != BRBT_NA)
+    col(right(node)) = !col(right(node));
 }
 
 #define color_flip(x) color_flip(tree, x)
-
-static inline bool
-is_red(struct brbt_tree* tree, node_idx node)
-{
-  assert(tree);
-
-  /* nil nodes considered black */
-  if (node == BRBT_NA)
-    return false;
-
-  return col(node);
-}
-
-#define is_red(x) is_red(tree, x)
 
 static node_idx
 new_node(struct brbt_tree* tree, void* data_in)
@@ -245,23 +249,11 @@ new_node(struct brbt_tree* tree, void* data_in)
   return node;
 }
 
-__attribute__((hot, flatten)) static node_idx
-insert_impl(struct brbt_tree* tree, node_idx h, void* data, bool replace)
+static node_idx
+fixup(struct brbt_tree* tree, node_idx h)
 {
-  if (h == BRBT_NA)
-    return new_node(tree, data);
-
-  int cmp = compare(h, get_key(tree, data));
-
-  if (cmp == 0) {
-    if (replace) {
-      tree->deleter(tree, h);
-      memcpy(brbt_get(tree, h), data, tree->member_bytesize);
-    }
-  } else if (cmp < 0)
-    left(h) = insert_impl(tree, left(h), data, replace);
-  else
-    right(h) = insert_impl(tree, right(h), data, replace);
+  assert(tree);
+  assert(h != BRBT_NA);
 
   if (is_red(right(h)) && !is_red(left(h)))
     h = rotl(h);
@@ -271,6 +263,27 @@ insert_impl(struct brbt_tree* tree, node_idx h, void* data, bool replace)
     color_flip(h);
 
   return h;
+}
+
+__attribute__((hot, flatten)) static node_idx
+insert_impl(struct brbt_tree* tree, node_idx node, void* data, bool replace)
+{
+  if (node == BRBT_NA)
+    return new_node(tree, data);
+
+  int cmp = compare(node, get_key(tree, data));
+
+  if (cmp == 0) {
+    if (replace) {
+      tree->deleter(tree, node);
+      memcpy(brbt_get(tree, node), data, tree->member_bytesize);
+    }
+  } else if (cmp < 0)
+    left(node) = insert_impl(tree, left(node), data, replace);
+  else
+    right(node) = insert_impl(tree, right(node), data, replace);
+
+  return fixup(tree, node);
 }
 
 node_idx
@@ -397,14 +410,7 @@ delete_min_impl(struct brbt_tree* tree, node_idx h, bool call_deleter)
 
   left(h) = delete_min_impl(tree, left(h), call_deleter);
 
-  if (is_red(right(h)))
-    h = rotl(h);
-  if (is_red(left(h)) && is_red(left(left(h))))
-    h = rotr(h);
-  if (is_red(left(h)) && is_red(right(h)))
-    color_flip(h);
-
-  return h;
+  return fixup(tree, h);
 }
 
 void
@@ -419,14 +425,11 @@ static node_idx
 delete_impl(struct brbt_tree* tree, unsigned h, void* key)
 {
 #define del(node, key) delete_impl(tree, node, key)
-  if (h == BRBT_NA)
-    return BRBT_NA;
-
   if (compare(h, key) < 0) {
-    if (left(h) != BRBT_NA && !is_red(left(h)) && !is_red(left(left(h)))) {
+    if (!is_red(left(h)) && !is_red(left(left(h))))
       h = move_red_left(tree, h);
-      left(h) = del(left(h), key);
-    }
+
+    left(h) = del(left(h), key);
   } else {
     if (is_red(left(h)))
       h = rotr(h);
@@ -434,36 +437,27 @@ delete_impl(struct brbt_tree* tree, unsigned h, void* key)
     if (compare(h, key) == 0 && (right(h) == BRBT_NA))
       return BRBT_NA;
 
-    if (right(h) != BRBT_NA) {
-      if (!is_red(right(h)) && !is_red(left(right(h))))
-        h = move_red_right(tree, h);
+    if (!is_red(right(h)) && !is_red(left(right(h))))
+      h = move_red_right(tree, h);
 
-      if (compare(h, key) == 0) {
-        node_idx min = brbt_minimum(tree, right(h));
-        right(h) = delete_min_impl(tree, right(h), false);
-        left(min) = left(h);
-        right(min) = right(h);
-        h = min;
-      } else
-        right(h) = del(right(h), key);
-    }
+    if (compare(h, key) == 0) {
+      node_idx min = brbt_minimum(tree, right(h));
+      right(h) = delete_min_impl(tree, right(h), false);
+      left(min) = left(h);
+      right(min) = right(h);
+      h = min;
+    } else
+      right(h) = del(right(h), key);
   }
 
-  if (is_red(right(h)))
-    h = rotl(h);
-  if (is_red(left(h)) && is_red(left(left(h))))
-    h = rotr(h);
-  if (is_red(left(h)) && is_red(right(h)))
-    color_flip(h);
-
-  return h;
+  return fixup(tree, h);
 }
 
 /* deletes a node with a given key */
 void
 brbt_delete(struct brbt_tree* tree, void* key)
 {
-  delete_impl(tree, tree->root, key);
+  tree->root = delete_impl(tree, tree->root, key);
 }
 
 static void
