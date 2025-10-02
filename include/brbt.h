@@ -18,9 +18,12 @@ enum brbt_node_flags : unsigned char
 struct brbt_bookkeeping_info
 {
   node_idx left, right;
-  node_idx parent;
-  node_idx next_free;
-  bool red;
+
+  union
+  {
+    node_idx next_free;
+    bool red;
+  };
 };
 
 /*
