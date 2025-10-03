@@ -61,12 +61,16 @@ typedef size_t (*brbt_policy_decide)(void* userdata);
 /* hook to be ran whenever a node is inserted into the tree
  * allows one to maintain a bookkeeping list at an amortized cost
  */
-typedef size_t (*brbt_policy_insert_hook)(void* userdata, node_idx);
+typedef size_t (*brbt_policy_insert_hook)(struct brbt_tree*,
+                                          void* userdata,
+                                          node_idx);
 
 /* hook to be ran whenever a node is removed from the tree
  * allows one to maintain a bookkeeping list at an amortized cost
  */
-typedef size_t (*brbt_policy_remove_hook)(void* userdata, node_idx);
+typedef size_t (*brbt_policy_remove_hook)(struct brbt_tree*,
+                                          void* userdata,
+                                          node_idx);
 
 /* data structure to call for when the tree is full
  * but a node must be inserted, therefore a node must be deleted

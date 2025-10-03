@@ -142,22 +142,6 @@ brbt_get(struct brbt_tree* tree, node_idx idx)
   return &tree->data_array[tree->member_bytesize * idx];
 }
 
-static unsigned
-node_alloc(struct brbt_tree* tree)
-{
-  assert(tree);
-
-  if (tree->size >= tree->capacity)
-    assert(false);
-
-  tree->size++;
-
-  node_idx h = tree->first_free;
-  tree->first_free = nextfree(h);
-
-  return h;
-}
-
 static node_idx
 node_free(struct brbt_tree* tree, node_idx h)
 {
@@ -165,6 +149,9 @@ node_free(struct brbt_tree* tree, node_idx h)
 
   if (tree->deleter)
     tree->deleter(tree, h);
+
+  if (tree->enforce_policy)
+    tree->policy.remove_hook(tree, tree->policy.policy_data, h);
 
   if (tree->first_free == BRBT_NA) {
     /* no other free nodes */
@@ -186,6 +173,31 @@ node_free(struct brbt_tree* tree, node_idx h)
     nextfree(i) = h;
   } else
     exit(1);
+
+  return h;
+}
+
+static node_idx
+node_alloc(struct brbt_tree* tree)
+{
+  assert(tree);
+
+  if (tree->size >= tree->capacity) {
+    if (tree->enforce_policy) {
+      tree->policy.begin(tree->policy.policy_data);
+      if (tree->policy.run)
+        for (node_idx i = 0; i < tree->capacity; i++)
+          tree->policy.run(tree->policy.policy_data, i);
+      node_idx replace = tree->policy.decide(tree->policy.policy_data);
+      return node_free(tree, replace);
+    } else
+      assert(false);
+  }
+
+  tree->size++;
+
+  node_idx h = tree->first_free;
+  tree->first_free = nextfree(h);
 
   return h;
 }
@@ -277,6 +289,9 @@ new_node(struct brbt_tree* tree, void* data_in)
 
   void* data = brbt_get(tree, node);
   memcpy(data, data_in, tree->member_bytesize);
+
+  if (tree->enforce_policy)
+    tree->policy.insert_hook(tree, tree->policy.policy_data, node);
 
   return node;
 }
