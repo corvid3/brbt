@@ -131,6 +131,8 @@ get_key(struct brbt_tree* tree, char* data)
 #define right(x) get_bk(tree, x)->right
 #define col(x) get_bk(tree, x)->red
 
+#define nextfree(x) get_bk(tree, x)->next_free
+
 void*
 brbt_get(struct brbt_tree* tree, node_idx idx)
 {
@@ -151,9 +153,39 @@ node_alloc(struct brbt_tree* tree)
   tree->size++;
 
   node_idx h = tree->first_free;
-  tree->first_free = get_bk(tree, h)->next_free;
+  tree->first_free = nextfree(h);
 
-  printf("allocated %i\n", h);
+  return h;
+}
+
+static node_idx
+node_free(struct brbt_tree* tree, node_idx h)
+{
+  tree->size--;
+
+  if (tree->deleter)
+    tree->deleter(tree, h);
+
+  if (tree->first_free == BRBT_NA) {
+    /* no other free nodes */
+    tree->first_free = h;
+    nextfree(h) = BRBT_NA;
+  } else if (h < tree->first_free) {
+    /* this node is before the first free node */
+    nextfree(h) = tree->first_free;
+    tree->first_free = h;
+  } else if (h > tree->first_free) {
+    /* this node is after the first free node */
+    node_idx i = tree->first_free;
+
+    while (h > nextfree(i)) {
+      i = nextfree(i);
+    }
+
+    nextfree(h) = nextfree(i);
+    nextfree(i) = h;
+  } else
+    exit(1);
 
   return h;
 }
@@ -329,40 +361,6 @@ brbt_minimum(struct brbt_tree* tree, unsigned node)
   return node;
 }
 
-static node_idx
-on_delete(struct brbt_tree* tree, node_idx to_del, bool call_deleter)
-{
-  assert(to_del != tree->first_free);
-  tree->size--;
-
-  if (tree->deleter && call_deleter)
-    tree->deleter(tree, to_del);
-
-  if (tree->first_free == BRBT_NA) {
-    /* no other free nodes */
-    tree->first_free = to_del;
-    get_bk(tree, to_del)->next_free = BRBT_NA;
-  } else if (to_del < tree->first_free) {
-    /* this node is before the first free node */
-    get_bk(tree, to_del)->next_free = tree->first_free;
-    tree->first_free = to_del;
-  } else {
-    /* this node is after the first free node */
-    node_idx previous = tree->first_free;
-    node_idx follower = get_bk(tree, tree->first_free)->next_free;
-
-    while (to_del > follower) {
-      previous = follower;
-      follower = get_bk(tree, follower)->next_free;
-    }
-
-    get_bk(tree, previous)->next_free = to_del;
-    get_bk(tree, to_del)->next_free = follower;
-  }
-
-  return to_del;
-}
-
 static unsigned
 move_red_left(struct brbt_tree* tree, unsigned h)
 {
@@ -397,18 +395,25 @@ move_red_right(struct brbt_tree* tree, unsigned h)
 }
 
 static node_idx
-delete_min_impl(struct brbt_tree* tree, node_idx h, bool call_deleter)
+delete_min_impl(struct brbt_tree* tree, node_idx h, bool free_node)
 {
+  if (!tree)
+    return 0;
+  if (h == BRBT_NA)
+    return 0;
+
   assert(tree);
   assert(h != BRBT_NA);
 
-  if (left(h) == BRBT_NA)
+  if (left(h) == BRBT_NA) {
+    if (free_node)
+      node_free(tree, h);
     return BRBT_NA;
-
+  }
   if (!is_red(left(h)) && !is_red(left(left(h))))
     h = move_red_left(tree, h);
 
-  left(h) = delete_min_impl(tree, left(h), call_deleter);
+  left(h) = delete_min_impl(tree, left(h), free_node);
 
   return fixup(tree, h);
 }
@@ -418,12 +423,24 @@ brbt_delete_min(struct brbt_tree* tree, node_idx node)
 {
   if (node == BRBT_NA)
     node = tree->root;
+
   delete_min_impl(tree, node, true);
 }
 
 static node_idx
 delete_impl(struct brbt_tree* tree, unsigned h, void* key)
 {
+  if (!tree)
+    return 0;
+  if (h == BRBT_NA)
+    return 0;
+  if (!key)
+    return 0;
+
+  assert(tree);
+  assert(h != BRBT_NA);
+  assert(key);
+
 #define del(node, key) delete_impl(tree, node, key)
   if (compare(h, key) < 0) {
     if (!is_red(left(h)) && !is_red(left(left(h))))
@@ -435,7 +452,7 @@ delete_impl(struct brbt_tree* tree, unsigned h, void* key)
       h = rotr(h);
 
     if (compare(h, key) == 0 && (right(h) == BRBT_NA))
-      return BRBT_NA;
+      return node_free(tree, h), BRBT_NA;
 
     if (!is_red(right(h)) && !is_red(left(right(h))))
       h = move_red_right(tree, h);
@@ -445,6 +462,7 @@ delete_impl(struct brbt_tree* tree, unsigned h, void* key)
       right(h) = delete_min_impl(tree, right(h), false);
       left(min) = left(h);
       right(min) = right(h);
+      node_free(tree, h);
       h = min;
     } else
       right(h) = del(right(h), key);
