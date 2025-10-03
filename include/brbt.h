@@ -6,8 +6,8 @@
 
 #define BRBT_NA ((unsigned)-1)
 
-struct brbt_tree;
-typedef unsigned node_idx;
+struct brbt;
+typedef unsigned brbt_node;
 
 enum brbt_node_flags : unsigned char
 {
@@ -17,11 +17,11 @@ enum brbt_node_flags : unsigned char
 
 struct brbt_bookkeeping_info
 {
-  node_idx left, right;
+  brbt_node left, right;
 
   union
   {
-    node_idx next_free;
+    brbt_node next_free;
     bool red;
   };
 };
@@ -31,10 +31,10 @@ struct brbt_bookkeeping_info
  *  greater than max_align_t to brbt!
  */
 
-typedef void (*brbt_iterator)(struct brbt_tree*, void* userdata, node_idx);
+typedef void (*brbt_iterator)(struct brbt*, void* userdata, brbt_node);
 
 typedef int (*brbt_comparator)(void* key_lhs, void* key_rhs);
-typedef void (*brbt_deleter)(struct brbt_tree*, node_idx);
+typedef void (*brbt_deleter)(struct brbt*, brbt_node);
 
 /* function initially called when the internal array of a tree is
  * filled, and must make space for a newly inserted node
@@ -49,7 +49,7 @@ typedef void (*brbt_policy_begin)(void* userdata);
  * returning true will immediately end the iteration and call brbt_policy_decide
  * returning false will continue the iteration
  */
-typedef bool (*brbt_policy_run)(void* userdata, node_idx);
+typedef bool (*brbt_policy_run)(void* userdata, brbt_node);
 
 /* the function ran either after the brbt_policy_run function returns true,
  * or after every node index has been iterated over.
@@ -61,16 +61,16 @@ typedef size_t (*brbt_policy_decide)(void* userdata);
 /* hook to be ran whenever a node is inserted into the tree
  * allows one to maintain a bookkeeping list at an amortized cost
  */
-typedef size_t (*brbt_policy_insert_hook)(struct brbt_tree*,
+typedef size_t (*brbt_policy_insert_hook)(struct brbt*,
                                           void* userdata,
-                                          node_idx);
+                                          brbt_node);
 
 /* hook to be ran whenever a node is removed from the tree
  * allows one to maintain a bookkeeping list at an amortized cost
  */
-typedef size_t (*brbt_policy_remove_hook)(struct brbt_tree*,
+typedef size_t (*brbt_policy_remove_hook)(struct brbt*,
                                           void* userdata,
-                                          node_idx);
+                                          brbt_node);
 
 /* data structure to call for when the tree is full
  * but a node must be inserted, therefore a node must be deleted
@@ -101,45 +101,45 @@ struct brbt_policy
  * capacity: size of the policy of bk array, in logical size
  *      if null, the implementation will automatically resize the array
  */
-struct brbt_tree*
-brbt_create_ex(size_t node_size,
-               size_t capacity,
-               size_t key_offset,
-               struct brbt_policy* policy,
-               struct brbt_bookkeeping_info* bk,
-               void* data,
-               brbt_deleter deleter,
-               brbt_comparator compare);
+struct brbt*
+brbt_create(size_t node_size,
+            size_t capacity,
+            size_t key_offset,
+            struct brbt_policy* policy,
+            struct brbt_bookkeeping_info* bk,
+            void* data,
+            brbt_deleter deleter,
+            brbt_comparator compare);
 
 /* returns the node index for which the key is found
  * may return BRBT_NA if no node matches
  */
-node_idx
-brbt_find(struct brbt_tree* tree, void* key);
+brbt_node
+brbt_find(struct brbt* tree, void* key);
 
 /* gets the node data associated with a node index */
 void*
-brbt_get(struct brbt_tree* tree, node_idx);
+brbt_get(struct brbt* tree, brbt_node);
 
 /* inserts a node with a key and returns its node index */
-node_idx
-brbt_insert(struct brbt_tree* tree, void* node, bool replace);
+brbt_node
+brbt_insert(struct brbt* tree, void* node, bool replace);
 
 /* deletes a node with a given key */
 void
-brbt_delete(struct brbt_tree* tree, void* key);
+brbt_delete(struct brbt* tree, void* key);
 
 /* deletes the smallest node within a subtree */
 void
-brbt_delete_min(struct brbt_tree* tree, node_idx);
+brbt_delete_min(struct brbt* tree, brbt_node);
 
 void
-brbt_iterate(struct brbt_tree*, brbt_iterator, void* userdata);
+brbt_iterate(struct brbt*, brbt_iterator, void* userdata);
 
 /* returns the node index of the smallest node within the tree */
-node_idx
-brbt_minimum(struct brbt_tree* tree, node_idx);
+brbt_node
+brbt_minimum(struct brbt* tree, brbt_node);
 
 /* returns the node index to the root of the tree */
-node_idx
-brbt_root(struct brbt_tree* tree);
+brbt_node
+brbt_root(struct brbt* tree);

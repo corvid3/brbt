@@ -12,7 +12,7 @@
  * on left leaning red-black trees.
  */
 
-struct brbt_tree
+struct brbt
 {
   /* realistically void*,
    * but the alignment shouldnt really matter
@@ -49,7 +49,7 @@ struct brbt_tree
   unsigned root;
 
   /* first free node in the list */
-  node_idx first_free;
+  brbt_node first_free;
 
   brbt_comparator comparator;
   brbt_deleter deleter;
@@ -58,21 +58,21 @@ struct brbt_tree
   struct brbt_policy policy;
 };
 
-struct brbt_tree*
-brbt_create_ex(size_t member_bytesize,
-               size_t capacity,
-               size_t key_offset,
-               struct brbt_policy* policy,
-               struct brbt_bookkeeping_info* bookkeeping,
-               void* data,
-               brbt_deleter deleter,
-               brbt_comparator comparator)
+struct brbt*
+brbt_create(size_t member_bytesize,
+            size_t capacity,
+            size_t key_offset,
+            struct brbt_policy* policy,
+            struct brbt_bookkeeping_info* bookkeeping,
+            void* data,
+            brbt_deleter deleter,
+            brbt_comparator comparator)
 {
   assert(member_bytesize != 0);
   assert(capacity != 0);
   assert(comparator);
 
-  struct brbt_tree* tree = malloc(sizeof *tree);
+  struct brbt* tree = malloc(sizeof *tree);
 
   tree->data_array = data ? data : malloc(member_bytesize * capacity);
   tree->bookkeeping_array =
@@ -90,8 +90,12 @@ brbt_create_ex(size_t member_bytesize,
 
   tree->deleter = deleter;
   tree->comparator = comparator;
-  if (policy)
+
+  if (policy) {
+    assert(policy->begin);
+    assert(policy->decide);
     tree->enforce_policy = true, tree->policy = *policy;
+  }
 
   for (unsigned i = 0; i < tree->capacity; i++) {
     bookkeeping[i].red = false;
@@ -110,7 +114,7 @@ brbt_create_ex(size_t member_bytesize,
 }
 
 static inline struct brbt_bookkeeping_info*
-get_bk(struct brbt_tree* tree, unsigned idx)
+get_bk(struct brbt* tree, unsigned idx)
 {
   assert(tree);
   assert(idx != BRBT_NA);
@@ -119,7 +123,7 @@ get_bk(struct brbt_tree* tree, unsigned idx)
 }
 
 static inline void*
-get_key(struct brbt_tree* tree, char* data)
+get_key(struct brbt* tree, char* data)
 {
   assert(tree);
   assert(data);
@@ -134,7 +138,7 @@ get_key(struct brbt_tree* tree, char* data)
 #define nextfree(x) get_bk(tree, x)->next_free
 
 void*
-brbt_get(struct brbt_tree* tree, node_idx idx)
+brbt_get(struct brbt* tree, brbt_node idx)
 {
   assert(tree);
   assert(idx != BRBT_NA);
@@ -142,8 +146,8 @@ brbt_get(struct brbt_tree* tree, node_idx idx)
   return &tree->data_array[tree->member_bytesize * idx];
 }
 
-static node_idx
-node_free(struct brbt_tree* tree, node_idx h)
+static brbt_node
+node_free(struct brbt* tree, brbt_node h)
 {
   tree->size--;
 
@@ -163,7 +167,7 @@ node_free(struct brbt_tree* tree, node_idx h)
     tree->first_free = h;
   } else if (h > tree->first_free) {
     /* this node is after the first free node */
-    node_idx i = tree->first_free;
+    brbt_node i = tree->first_free;
 
     while (h > nextfree(i)) {
       i = nextfree(i);
@@ -177,8 +181,8 @@ node_free(struct brbt_tree* tree, node_idx h)
   return h;
 }
 
-static node_idx
-node_alloc(struct brbt_tree* tree)
+static brbt_node
+node_alloc(struct brbt* tree)
 {
   assert(tree);
 
@@ -186,9 +190,9 @@ node_alloc(struct brbt_tree* tree)
     if (tree->enforce_policy) {
       tree->policy.begin(tree->policy.policy_data);
       if (tree->policy.run)
-        for (node_idx i = 0; i < tree->capacity; i++)
+        for (brbt_node i = 0; i < tree->capacity; i++)
           tree->policy.run(tree->policy.policy_data, i);
-      node_idx replace = tree->policy.decide(tree->policy.policy_data);
+      brbt_node replace = tree->policy.decide(tree->policy.policy_data);
       return node_free(tree, replace);
     } else
       assert(false);
@@ -196,14 +200,14 @@ node_alloc(struct brbt_tree* tree)
 
   tree->size++;
 
-  node_idx h = tree->first_free;
+  brbt_node h = tree->first_free;
   tree->first_free = nextfree(h);
 
   return h;
 }
 
 static inline int
-compare(struct brbt_tree* tree, node_idx node, void* key)
+compare(struct brbt* tree, brbt_node node, void* key)
 {
   assert(node != BRBT_NA);
   assert(key);
@@ -215,7 +219,7 @@ compare(struct brbt_tree* tree, node_idx node, void* key)
 #define compare(node, key) compare(tree, node, key)
 
 static inline bool
-is_red(struct brbt_tree* tree, node_idx node)
+is_red(struct brbt* tree, brbt_node node)
 {
   assert(tree);
 
@@ -228,14 +232,14 @@ is_red(struct brbt_tree* tree, node_idx node)
 
 #define is_red(x) is_red(tree, x)
 
-static node_idx
-rotate_left(struct brbt_tree* tree, node_idx h)
+static brbt_node
+rotate_left(struct brbt* tree, brbt_node h)
 {
   assert(tree);
   assert(h != BRBT_NA);
   assert(is_red(right(h)));
 
-  node_idx x = right(h);
+  brbt_node x = right(h);
   right(h) = left(x);
   left(x) = h;
   col(x) = col(h);
@@ -243,14 +247,14 @@ rotate_left(struct brbt_tree* tree, node_idx h)
   return x;
 }
 
-static node_idx
-rotate_right(struct brbt_tree* tree, node_idx h)
+static brbt_node
+rotate_right(struct brbt* tree, brbt_node h)
 {
   assert(tree);
   assert(h != BRBT_NA);
   assert(is_red(left(h)));
 
-  node_idx x = left(h);
+  brbt_node x = left(h);
   left(h) = right(x);
   right(x) = h;
   col(x) = col(h);
@@ -262,7 +266,7 @@ rotate_right(struct brbt_tree* tree, node_idx h)
 #define rotr(x) rotate_right(tree, x)
 
 static void
-color_flip(struct brbt_tree* tree, node_idx node)
+color_flip(struct brbt* tree, brbt_node node)
 {
   assert(tree);
   assert(node != BRBT_NA);
@@ -276,13 +280,13 @@ color_flip(struct brbt_tree* tree, node_idx node)
 
 #define color_flip(x) color_flip(tree, x)
 
-static node_idx
-new_node(struct brbt_tree* tree, void* data_in)
+static brbt_node
+new_node(struct brbt* tree, void* data_in)
 {
   assert(tree);
   assert(data_in);
 
-  node_idx node = node_alloc(tree);
+  brbt_node node = node_alloc(tree);
   col(node) = true;
   left(node) = BRBT_NA;
   right(node) = BRBT_NA;
@@ -296,8 +300,8 @@ new_node(struct brbt_tree* tree, void* data_in)
   return node;
 }
 
-static node_idx
-fixup(struct brbt_tree* tree, node_idx h)
+static brbt_node
+fixup(struct brbt* tree, brbt_node h)
 {
   assert(tree);
   assert(h != BRBT_NA);
@@ -312,8 +316,8 @@ fixup(struct brbt_tree* tree, node_idx h)
   return h;
 }
 
-__attribute__((hot, flatten)) static node_idx
-insert_impl(struct brbt_tree* tree, node_idx node, void* data, bool replace)
+__attribute__((hot, flatten)) static brbt_node
+insert_impl(struct brbt* tree, brbt_node node, void* data, bool replace)
 {
   if (node == BRBT_NA)
     return new_node(tree, data);
@@ -333,8 +337,8 @@ insert_impl(struct brbt_tree* tree, node_idx node, void* data, bool replace)
   return fixup(tree, node);
 }
 
-node_idx
-brbt_insert(struct brbt_tree* tree, void* node_in, bool replace)
+brbt_node
+brbt_insert(struct brbt* tree, void* node_in, bool replace)
 {
   assert(tree);
   assert(node_in);
@@ -342,8 +346,8 @@ brbt_insert(struct brbt_tree* tree, void* node_in, bool replace)
   return tree->root = insert_impl(tree, tree->root, node_in, replace);
 }
 
-node_idx
-brbt_find(struct brbt_tree* tree, void* key)
+brbt_node
+brbt_find(struct brbt* tree, void* key)
 {
   assert(tree);
   assert(key);
@@ -364,8 +368,8 @@ brbt_find(struct brbt_tree* tree, void* key)
   return BRBT_NA;
 }
 
-node_idx
-brbt_minimum(struct brbt_tree* tree, unsigned node)
+brbt_node
+brbt_minimum(struct brbt* tree, unsigned node)
 {
   assert(tree);
   assert(node != BRBT_NA);
@@ -377,7 +381,7 @@ brbt_minimum(struct brbt_tree* tree, unsigned node)
 }
 
 static unsigned
-move_red_left(struct brbt_tree* tree, unsigned h)
+move_red_left(struct brbt* tree, unsigned h)
 {
   assert(tree);
   assert(h != BRBT_NA);
@@ -394,7 +398,7 @@ move_red_left(struct brbt_tree* tree, unsigned h)
 }
 
 static unsigned
-move_red_right(struct brbt_tree* tree, unsigned h)
+move_red_right(struct brbt* tree, unsigned h)
 {
   assert(tree);
   assert(h != BRBT_NA);
@@ -409,8 +413,8 @@ move_red_right(struct brbt_tree* tree, unsigned h)
   return h;
 }
 
-static node_idx
-delete_min_impl(struct brbt_tree* tree, node_idx h, bool free_node)
+static brbt_node
+delete_min_impl(struct brbt* tree, brbt_node h, bool free_node)
 {
   if (!tree)
     return 0;
@@ -434,7 +438,7 @@ delete_min_impl(struct brbt_tree* tree, node_idx h, bool free_node)
 }
 
 void
-brbt_delete_min(struct brbt_tree* tree, node_idx node)
+brbt_delete_min(struct brbt* tree, brbt_node node)
 {
   if (node == BRBT_NA)
     node = tree->root;
@@ -442,8 +446,8 @@ brbt_delete_min(struct brbt_tree* tree, node_idx node)
   delete_min_impl(tree, node, true);
 }
 
-static node_idx
-delete_impl(struct brbt_tree* tree, unsigned h, void* key)
+static brbt_node
+delete_impl(struct brbt* tree, unsigned h, void* key)
 {
   if (!tree)
     return 0;
@@ -473,7 +477,7 @@ delete_impl(struct brbt_tree* tree, unsigned h, void* key)
       h = move_red_right(tree, h);
 
     if (compare(h, key) == 0) {
-      node_idx min = brbt_minimum(tree, right(h));
+      brbt_node min = brbt_minimum(tree, right(h));
       right(h) = delete_min_impl(tree, right(h), false);
       left(min) = left(h);
       right(min) = right(h);
@@ -488,13 +492,13 @@ delete_impl(struct brbt_tree* tree, unsigned h, void* key)
 
 /* deletes a node with a given key */
 void
-brbt_delete(struct brbt_tree* tree, void* key)
+brbt_delete(struct brbt* tree, void* key)
 {
   tree->root = delete_impl(tree, tree->root, key);
 }
 
 static void
-iterate_impl(struct brbt_tree* tree,
+iterate_impl(struct brbt* tree,
              brbt_iterator iterator,
              void* userdata,
              unsigned node)
@@ -508,13 +512,13 @@ iterate_impl(struct brbt_tree* tree,
 }
 
 void
-brbt_iterate(struct brbt_tree* tree, brbt_iterator iterate, void* userdata)
+brbt_iterate(struct brbt* tree, brbt_iterator iterate, void* userdata)
 {
   iterate_impl(tree, iterate, userdata, tree->root);
 }
 
-node_idx
-brbt_root(struct brbt_tree* tree)
+brbt_node
+brbt_root(struct brbt* tree)
 {
   return tree->root;
 }
