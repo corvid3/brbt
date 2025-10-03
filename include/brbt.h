@@ -4,7 +4,7 @@
 #include <stdbool.h>
 #include <stddef.h>
 
-#define BRBT_NA ((unsigned)-1)
+#define BRBT_NIL ((unsigned)-1)
 
 struct brbt;
 typedef unsigned brbt_node;
@@ -111,8 +111,11 @@ brbt_create(size_t node_size,
             brbt_deleter deleter,
             brbt_comparator compare);
 
+void
+brbt_destroy(struct brbt*);
+
 /* returns the node index for which the key is found
- * may return BRBT_NA if no node matches
+ * may return BRBT_NIL if no node matches
  */
 brbt_node
 brbt_find(struct brbt* tree, void* key);
