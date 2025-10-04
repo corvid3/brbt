@@ -109,9 +109,11 @@ brbt_create(size_t member_bytesize,
   tree->data_array = data ? data : malloc(member_bytesize * capacity);
   tree->bookkeeping_array =
     bookkeeping ? bookkeeping : malloc(sizeof *bookkeeping * capacity);
+  assert(tree->data_array);
+  assert(tree->bookkeeping_array);
 
-  tree->allocated_data_array = (bool)data;
-  tree->allocated_bookkeeping_array = (bool)bookkeeping;
+  tree->allocated_data_array = !(bool)data;
+  tree->allocated_bookkeeping_array = !(bool)bookkeeping;
 
   tree->member_bytesize = member_bytesize;
   tree->member_key_offset = key_offset;
@@ -220,6 +222,11 @@ brbt_destroy(struct brbt* tree)
     begin = follower;
     follower = follower == BRBT_NIL ? 0 : nextfree(follower);
   }
+
+  if (tree->allocated_bookkeeping_array && tree->data_array)
+    free(tree->bookkeeping_array);
+  if (tree->allocated_data_array && tree->data_array)
+    free(tree->data_array);
 }
 
 static inline int
