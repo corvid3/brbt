@@ -125,11 +125,9 @@ brbt_create(size_t member_bytesize,
   tree->deleter = deleter;
   tree->comparator = comparator;
 
-  if (policy) {
-    assert(policy->begin);
-    assert(policy->decide);
+  if (policy)
     tree->enforce_policy = true, tree->policy = *policy;
-  } else
+  else
     tree->enforce_policy = false;
 
   for (unsigned i = 0; i < tree->capacity; i++) {
@@ -146,6 +144,18 @@ brbt_create(size_t member_bytesize,
   tree->first_free = 0;
 
   return tree;
+}
+
+unsigned
+brbt_size(struct brbt* tree)
+{
+  return tree->size;
+}
+
+unsigned
+brbt_capacity(struct brbt* tree)
+{
+  return tree->capacity;
 }
 
 static brbt_node
@@ -188,14 +198,9 @@ node_alloc(struct brbt* tree)
   assert(tree);
 
   if (tree->size >= tree->capacity) {
-    if (tree->enforce_policy) {
-      tree->policy.begin(tree->policy.policy_data);
-      if (tree->policy.run)
-        for (brbt_node i = 0; i < tree->capacity; i++)
-          tree->policy.run(tree->policy.policy_data, i);
-      brbt_node replace = tree->policy.decide(tree->policy.policy_data);
-      node_free(tree, replace);
-    } else
+    if (tree->enforce_policy)
+      node_free(tree, tree->policy.free(tree, tree->policy.policy_data));
+    else
       assert(false);
   }
 

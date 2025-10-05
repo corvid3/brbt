@@ -36,41 +36,26 @@ typedef void (*brbt_iterator)(struct brbt*, void* userdata, brbt_node);
 typedef int (*brbt_comparator)(void* key_lhs, void* key_rhs);
 typedef void (*brbt_deleter)(struct brbt*, brbt_node);
 
-/* function initially called when the internal array of a tree is
- * filled, and must make space for a newly inserted node
- * the policy_data pointer specified in brbt_policy will be passed as userdata
+/* function ran when the internal tree becomes full, and
+ * the array is defined by the user, therefore the array may not be
+ * reallocated.
+ * the function must return a valid node index to which node should be freed
  */
-typedef void (*brbt_policy_begin)(void* userdata);
-
-/* function to be ran once per node slot in the binary trees internal array
- * the policy_data pointer specified in brbt_policy will be passed as userdata
- * node is a pointer to the userdata pointer of a specific node
- * node_idx is the index into the internal array of said node
- * returning true will immediately end the iteration and call brbt_policy_decide
- * returning false will continue the iteration
- */
-typedef bool (*brbt_policy_run)(void* userdata, brbt_node);
-
-/* the function ran either after the brbt_policy_run function returns true,
- * or after every node index has been iterated over.
- * the policy_data pointer specified in brbt_policy will be passed as userdata
- * the function must return a valid node index that will be removed
- */
-typedef size_t (*brbt_policy_decide)(void* userdata);
+typedef brbt_node (*brbt_policy_free)(struct brbt*, void* userdata);
 
 /* hook to be ran whenever a node is inserted into the tree
  * allows one to maintain a bookkeeping list at an amortized cost
  */
-typedef size_t (*brbt_policy_insert_hook)(struct brbt*,
-                                          void* userdata,
-                                          brbt_node);
+typedef void (*brbt_policy_insert_hook)(struct brbt*,
+                                        void* userdata,
+                                        brbt_node);
 
 /* hook to be ran whenever a node is removed from the tree
  * allows one to maintain a bookkeeping list at an amortized cost
  */
-typedef size_t (*brbt_policy_remove_hook)(struct brbt*,
-                                          void* userdata,
-                                          brbt_node);
+typedef void (*brbt_policy_remove_hook)(struct brbt*,
+                                        void* userdata,
+                                        brbt_node);
 
 /* data structure to call for when the tree is full
  * but a node must be inserted, therefore a node must be deleted
@@ -80,13 +65,7 @@ struct brbt_policy
   void* policy_data;
 
   /* nullable */
-  brbt_policy_run run;
-
-  /* not nullable */
-  brbt_policy_begin begin;
-  brbt_policy_decide decide;
-
-  /* nullable */
+  brbt_policy_free free;
   brbt_policy_insert_hook insert_hook;
   brbt_policy_remove_hook remove_hook;
 };
@@ -113,6 +92,12 @@ brbt_create(size_t node_size,
 
 void
 brbt_destroy(struct brbt*);
+
+unsigned
+brbt_size(struct brbt*);
+
+unsigned
+brbt_capacity(struct brbt*);
 
 /* returns the node index for which the key is found
  * may return BRBT_NIL if no node matches
