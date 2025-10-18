@@ -33,7 +33,7 @@ struct brbt_bookkeeping_info
 
 typedef void (*brbt_iterator)(struct brbt*, void* userdata, brbt_node);
 
-typedef int (*brbt_comparator)(void* key_lhs, void* key_rhs);
+typedef int (*brbt_comparator)(void const* key_lhs, void const* key_rhs);
 typedef void (*brbt_deleter)(struct brbt*, brbt_node);
 
 /* function ran when the internal tree becomes full, and
@@ -70,6 +70,54 @@ struct brbt_policy
   brbt_policy_remove_hook remove_hook;
 };
 
+struct brbt_allocator_out
+{
+  void* data_array;
+  struct brbt_bookkeeping_info* bk_array;
+  unsigned size;
+};
+
+typedef struct brbt_allocator_out (*brbt_page_allocator)(struct brbt*,
+                                                         void* userdata);
+typedef struct brbt_allocator_out (*brbt_reallocator)(
+  struct brbt*,
+  void* userdata,
+  void* array,
+  struct brbt_bookkeeping_info* bk);
+
+struct brbt_allocation
+{
+  /* set to true to use the page type allocator */
+  /* NOT implemented */
+  bool paged;
+
+  union
+  {
+    /* a paged allocator uses a linked list of
+     * allocated fixed size arrays that are never
+     * reallocated/moved within memory.
+     * this allows all nodes within the tree to be
+     * at fixed memory locations; the tradeoff
+     * is slightly worse cache performance
+     */
+    struct
+    {
+
+    } paged_allocator;
+
+    /* an unpaged allocator uses a single resizable array
+     * in the backend, reallocating the array with a new size
+     * whenever out of space. this results in pointers to
+     * nodes within the tree being invalidated upon resizing,
+     * however the cache performance is better than a paged allocator
+     */
+    struct
+    {
+      brbt_reallocator reallocator;
+    } unpaged_allocator;
+  };
+};
+
 /* bk : pointer to an array of struct brbt_bookkeeping_info[capacity]
  *      if null, then an array will be maintained within the implementation
  * data: pointer to an array of your data structure of length capacity
@@ -84,6 +132,7 @@ struct brbt*
 brbt_create(size_t node_size,
             size_t capacity,
             size_t key_offset,
+            struct brbt_allocation* allocation,
             struct brbt_policy* policy,
             struct brbt_bookkeeping_info* bk,
             void* data,
@@ -103,19 +152,26 @@ brbt_capacity(struct brbt*);
  * may return BRBT_NIL if no node matches
  */
 brbt_node
-brbt_find(struct brbt* tree, void* key);
+brbt_find(struct brbt* tree, void const* key);
 
 /* gets the node data associated with a node index */
 void*
 brbt_get(struct brbt* tree, brbt_node);
 
-/* inserts a node with a key and returns its node index */
+/* inserts a node with a key and returns its node index
+ * if no delete operations are performed, then it is guaranteed
+ *   that successive insert operations will return incrementing nodes indices
+ */
 brbt_node
 brbt_insert(struct brbt* tree, void* node, bool replace);
 
 /* deletes a node with a given key */
 void
 brbt_delete(struct brbt* tree, void* key);
+
+/* empties a tree */
+void
+brbt_clear(struct brbt* tree);
 
 /* deletes the smallest node within a subtree */
 void

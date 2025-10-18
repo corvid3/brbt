@@ -12,6 +12,14 @@
  * on left leaning red-black trees.
  */
 
+struct brbt_page
+{
+  struct brbt_page* next;
+  unsigned size;
+  void* data_array;
+  struct brbt_bookkeeping_info* bk;
+};
+
 struct brbt
 {
   /* realistically void*,
@@ -56,6 +64,7 @@ struct brbt
 
   bool enforce_policy;
   struct brbt_policy policy;
+  struct brbt_allocation allocation;
 };
 
 #define left(x) get_bk(tree, x)->left
@@ -94,6 +103,7 @@ struct brbt*
 brbt_create(size_t member_bytesize,
             size_t capacity,
             size_t key_offset,
+            struct brbt_allocation* allocation,
             struct brbt_policy* policy,
             struct brbt_bookkeeping_info* bookkeeping,
             void* data,
@@ -106,14 +116,25 @@ brbt_create(size_t member_bytesize,
 
   struct brbt* tree = malloc(sizeof *tree);
 
-  tree->data_array = data ? data : malloc(member_bytesize * capacity);
-  tree->bookkeeping_array =
-    bookkeeping ? bookkeeping : malloc(sizeof *bookkeeping * capacity);
+  if (data) {
+    tree->data_array = data;
+    tree->allocated_data_array = false;
+  } else {
+    tree->data_array = malloc(member_bytesize * capacity);
+    tree->allocated_data_array = true;
+  }
+
+  if (bookkeeping) {
+    tree->bookkeeping_array = bookkeeping;
+    tree->allocated_bookkeeping_array = false;
+  } else {
+    tree->bookkeeping_array =
+      malloc(sizeof(struct brbt_bookkeeping_info) * capacity);
+    tree->allocated_bookkeeping_array = true;
+  }
+
   assert(tree->data_array);
   assert(tree->bookkeeping_array);
-
-  tree->allocated_data_array = !(bool)data;
-  tree->allocated_bookkeeping_array = !(bool)bookkeeping;
 
   tree->member_bytesize = member_bytesize;
   tree->member_key_offset = key_offset;
@@ -125,20 +146,23 @@ brbt_create(size_t member_bytesize,
   tree->deleter = deleter;
   tree->comparator = comparator;
 
+  if (allocation) {
+  }
+
   if (policy)
     tree->enforce_policy = true, tree->policy = *policy;
   else
     tree->enforce_policy = false;
 
   for (unsigned i = 0; i < tree->capacity; i++) {
-    bookkeeping[i].red = false;
-    bookkeeping[i].left = BRBT_NIL;
-    bookkeeping[i].right = BRBT_NIL;
+    tree->bookkeeping_array[i].red = false;
+    tree->bookkeeping_array[i].left = BRBT_NIL;
+    tree->bookkeeping_array[i].right = BRBT_NIL;
 
     if (i < tree->capacity - 1)
-      bookkeeping[i].next_free = i + 1;
+      tree->bookkeeping_array[i].next_free = i + 1;
     else
-      bookkeeping[i].next_free = BRBT_NIL;
+      tree->bookkeeping_array[i].next_free = BRBT_NIL;
   }
 
   tree->first_free = 0;
@@ -213,6 +237,31 @@ node_alloc(struct brbt* tree)
 }
 
 void
+brbt_clear(struct brbt* tree)
+{
+  if (tree->size == 0)
+    return;
+
+  /* clear all the nodes before the first free node */
+  for (brbt_node i = 0; i < tree->first_free; i++)
+    node_free(tree, i);
+
+  /* for each free node, clear the nodes after it and
+   * before the next free node
+   */
+
+  brbt_node current = tree->first_free;
+  while (current != BRBT_NIL) {
+    brbt_node until = nextfree(current);
+    if (until == BRBT_NIL)
+      until = tree->capacity;
+
+    for (brbt_node i = current + 1; i < until; i++)
+      node_free(tree, i);
+  }
+}
+
+void
 brbt_destroy(struct brbt* tree)
 {
   volatile brbt_node begin = 0;
@@ -235,7 +284,7 @@ brbt_destroy(struct brbt* tree)
 }
 
 static inline int
-compare(struct brbt* tree, brbt_node node, void* key)
+compare(struct brbt* tree, brbt_node node, void const* key)
 {
   assert(node != BRBT_NIL);
   assert(key);
@@ -375,7 +424,7 @@ brbt_insert(struct brbt* tree, void* node_in, bool replace)
 }
 
 brbt_node
-brbt_find(struct brbt* tree, void* key)
+brbt_find(struct brbt* tree, void const* key)
 {
   assert(tree);
   assert(key);
