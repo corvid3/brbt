@@ -41,7 +41,7 @@ typedef void (*brbt_deleter)(struct brbt*, brbt_node);
  * reallocated.
  * the function must return a valid node index to which node should be freed
  */
-typedef brbt_node (*brbt_policy_free)(struct brbt*, void* userdata);
+typedef brbt_node (*brbt_policy_select)(struct brbt*, void* userdata);
 
 /* hook to be ran whenever a node is inserted into the tree
  * allows one to maintain a bookkeeping list at an amortized cost
@@ -57,18 +57,19 @@ typedef void (*brbt_policy_remove_hook)(struct brbt*,
                                         void* userdata,
                                         brbt_node);
 
-/* data structure to call for when the tree is full
- * but a node must be inserted, therefore a node must be deleted
- */
-struct brbt_policy
-{
-  void* policy_data;
+typedef void (*brbt_free)(struct brbt*,
+                          void* userdata,
+                          void* array,
+                          struct brbt_bookkeeping_info* bk);
 
-  /* nullable */
-  brbt_policy_free free;
-  brbt_policy_insert_hook insert_hook;
-  brbt_policy_remove_hook remove_hook;
-};
+typedef struct brbt_allocator_out (*brbt_page_allocator)(struct brbt*,
+                                                         void* userdata);
+
+typedef struct brbt_allocator_out (*brbt_reallocator)(
+  struct brbt*,
+  void* userdata,
+  void* array,
+  struct brbt_bookkeeping_info* bk);
 
 struct brbt_allocator_out
 {
@@ -77,46 +78,76 @@ struct brbt_allocator_out
   unsigned size;
 };
 
-typedef struct brbt_allocator_out (*brbt_page_allocator)(struct brbt*,
-                                                         void* userdata);
-typedef struct brbt_allocator_out (*brbt_reallocator)(
-  struct brbt*,
-  void* userdata,
-  void* array,
-  struct brbt_bookkeeping_info* bk);
-
-struct brbt_allocation
+struct brbt_policy
 {
-  /* set to true to use the page type allocator */
-  /* NOT implemented */
-  bool paged;
+  /* userdata to pass to the user policy functions */
+  void* policy_data;
 
-  union
-  {
-    /* a paged allocator uses a linked list of
-     * allocated fixed size arrays that are never
-     * reallocated/moved within memory.
-     * this allows all nodes within the tree to be
-     * at fixed memory locations; the tradeoff
-     * is slightly worse cache performance
-     */
-    struct
-    {
+  /* hook function ran whenever a node is inserted */
+  brbt_policy_insert_hook insert_hook;
 
-    } paged_allocator;
+  /* hook function ran whenever a node is removed */
+  brbt_policy_remove_hook remove_hook;
 
-    /* an unpaged allocator uses a single resizable array
-     * in the backend, reallocating the array with a new size
-     * whenever out of space. this results in pointers to
-     * nodes within the tree being invalidated upon resizing,
-     * however the cache performance is better than a paged allocator
-     */
-    struct
-    {
-      brbt_reallocator reallocator;
-    } unpaged_allocator;
-  };
+  /* function that is called whenever a tree runs out of space
+   * in the middle of an insert operation. this function is
+   * allowed to return an empty allocation, which will
+   * in turn cause the tree to call the "free" function to try
+   * and remove a value from the tree to create space for the
+   * inserted function. if free is non-existent or fails,
+   * then the insert operation shall fail.
+   */
+  brbt_reallocator resize;
+  brbt_free free;
+  brbt_policy_select select;
 };
+
+struct brbt
+{
+  /* realistically void*,
+   * but the alignment shouldnt really matter
+   * if it ever becomes a problem, make an issue
+   */
+  char* data_array;
+  struct brbt_bookkeeping_info* bookkeeping_array;
+
+  /* should we invoke free() on the data array */
+  bool allocated_data_array;
+
+  /* should we invoke free() on the bookkeeping array */
+  bool allocated_bookkeeping_array;
+
+  /* size of the user data structure
+   * includes trailing padding
+   */
+  size_t member_bytesize;
+
+  /* byte offset into the user data structure
+   * for where to find the key data
+   */
+  size_t member_key_offset;
+
+  /* number of allocated nodes */
+  unsigned size;
+
+  /* maximum size of the array */
+  unsigned capacity;
+
+  /* index to the root node
+   * if == BRBT_NIL, then no root is specified
+   */
+  unsigned root;
+
+  /* first free node in the list */
+  brbt_node first_free;
+
+  brbt_comparator comparator;
+  brbt_deleter deleter;
+
+  struct brbt_policy policy;
+};
+
+extern struct brbt_policy brbt_default_policy;
 
 /* bk : pointer to an array of struct brbt_bookkeeping_info[capacity]
  *      if null, then an array will be maintained within the implementation
@@ -124,18 +155,13 @@ struct brbt_allocation
  *      if null, then an array will be maintained within the implementation
  * key_offset: byte offset into your data structure for where the key is stored
  * policy: what to do when we run out of space
- *      if null, tree will fail whenever a new node is inserted
  * capacity: size of the policy of bk array, in logical size
  *      if null, the implementation will automatically resize the array
  */
-struct brbt*
+struct brbt
 brbt_create(size_t node_size,
-            size_t capacity,
             size_t key_offset,
-            struct brbt_allocation* allocation,
             struct brbt_policy* policy,
-            struct brbt_bookkeeping_info* bk,
-            void* data,
             brbt_deleter deleter,
             brbt_comparator compare);
 
@@ -187,3 +213,57 @@ brbt_minimum(struct brbt* tree, brbt_node);
 /* returns the node index to the root of the tree */
 brbt_node
 brbt_root(struct brbt* tree);
+
+#ifndef BRBT_DEFAULT_POLICY
+#include <stdlib.h>
+
+static inline void
+brbt_default_policy_free(struct brbt* tree,
+                         void* user,
+                         void* array,
+                         struct brbt_bookkeeping_info* bk)
+{
+  (void)tree;
+  (void)user;
+
+  free(array);
+  free(bk);
+}
+
+static inline struct brbt_allocator_out
+brbt_default_policy_resize(struct brbt* tree,
+                           void* user,
+                           void* array,
+                           struct brbt_bookkeeping_info* bk)
+{
+  (void)user;
+
+  struct brbt_allocator_out out;
+  unsigned old_cap = brbt_capacity(tree);
+  unsigned new_cap = 0;
+  if (old_cap == 0)
+    new_cap = 64;
+  else
+    new_cap = old_cap * 1.5;
+
+  out.bk_array = realloc(bk, sizeof *bk * new_cap);
+  out.data_array = realloc(array, tree->member_bytesize * new_cap);
+  out.size = new_cap;
+
+  return out;
+}
+
+static inline struct brbt_policy
+brbt_create_default_policy()
+{
+  struct brbt_policy out;
+  out.policy_data = 0;
+  out.insert_hook = 0;
+  out.remove_hook = 0;
+  out.resize = brbt_default_policy_resize;
+  out.free = brbt_default_policy_free;
+  out.select = 0;
+  return out;
+}
+
+#endif
