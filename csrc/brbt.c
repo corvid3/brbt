@@ -1,5 +1,12 @@
 #include "brbt.h"
-#include <assert.h>
+
+#ifndef true
+#define true 1
+#endif
+
+#ifndef false
+#define false 0
+#endif
 
 /*
  * implementation adapted from the one
@@ -11,6 +18,9 @@
 #define right(x) get_bk(tree, x)->right
 #define col(x) get_bk(tree, x)->red
 #define nextfree(x) get_bk(tree, x)->next_free
+#define assert(x)                                                              \
+  ((x) ? (void)(0)                                                             \
+       : tree->policy.abort(tree, tree->policy.policy_data, __LINE__))
 
 static inline struct brbt_bookkeeping_info*
 get_bk(struct brbt* tree, unsigned idx)
@@ -40,20 +50,13 @@ brbt_get(struct brbt* tree, brbt_node idx)
 }
 
 struct brbt
-brbt_create(size_t member_bytesize,
-            size_t key_offset,
-            struct brbt_policy* policy,
+brbt_create(unsigned member_bytesize,
+            unsigned key_offset,
+            struct brbt_policy policy,
             brbt_deleter deleter,
             brbt_comparator comparator)
 {
-  assert(member_bytesize != 0);
-  assert(comparator);
-  assert(policy);
-
   struct brbt tree;
-
-  assert(tree.data_array);
-  assert(tree.bookkeeping_array);
 
   tree.member_bytesize = member_bytesize;
   tree.member_key_offset = key_offset;
@@ -65,22 +68,16 @@ brbt_create(size_t member_bytesize,
   tree.deleter = deleter;
   tree.comparator = comparator;
 
-  tree.policy = *policy;
+  tree.policy = policy;
   tree.data_array = NULL;
   tree.bookkeeping_array = NULL;
-
-  for (unsigned i = 0; i < tree.capacity; i++) {
-    tree.bookkeeping_array[i].red = false;
-    tree.bookkeeping_array[i].left = BRBT_NIL;
-    tree.bookkeeping_array[i].right = BRBT_NIL;
-
-    if (i < tree.capacity - 1)
-      tree.bookkeeping_array[i].next_free = i + 1;
-    else
-      tree.bookkeeping_array[i].next_free = BRBT_NIL;
-  }
-
   tree.first_free = 0;
+
+  ((member_bytesize != 0)
+     ? (void)(0)
+     : tree.policy.abort(&tree, tree.policy.policy_data, 54));
+  ((comparator) ? (void)(0)
+                : tree.policy.abort(&tree, tree.policy.policy_data, 57));
 
   return tree;
 }
@@ -140,6 +137,7 @@ node_alloc(struct brbt* tree)
   if (tree->size >= tree->capacity) {
     /* try to reallocate */
     if (tree->policy.resize) {
+      unsigned const old_cap = tree->capacity;
       struct brbt_allocator_out out =
         tree->policy.resize(tree,
                             tree->policy.policy_data,
@@ -148,15 +146,25 @@ node_alloc(struct brbt* tree)
       tree->data_array = out.data_array;
       tree->bookkeeping_array = out.bk_array;
       tree->capacity = out.size;
+      unsigned const new_cap = tree->capacity;
+
+      for (unsigned i = old_cap; i < new_cap; i++) {
+        tree->bookkeeping_array[i].left = BRBT_NIL;
+        tree->bookkeeping_array[i].right = BRBT_NIL;
+
+        if (i < tree->capacity - 1)
+          tree->bookkeeping_array[i].next_free = i + 1;
+        else
+          tree->bookkeeping_array[i].next_free = BRBT_NIL;
+      }
+
     } else {
       /* if we cant reallocate to gain a larger capacity,
        * we need to maybe remove a value.
        * if theres no free function, just assert false
        * (in the future, we should just fail insertion functions)
        */
-      if (!tree->policy.select)
-        assert(false);
-
+      assert(tree->policy.select);
       node_free(tree, tree->policy.select(tree, tree->policy.policy_data));
     }
   }
@@ -226,7 +234,7 @@ compare(struct brbt* tree, brbt_node node, void const* key)
 
 #define compare(node, key) compare(tree, node, key)
 
-static inline bool
+static inline _Bool
 is_red(struct brbt* tree, brbt_node node)
 {
   assert(tree);
@@ -330,7 +338,7 @@ __attribute__((hot, flatten)) static brbt_node
 insert_impl(struct brbt* tree,
             brbt_node node,
             void* data,
-            bool replace,
+            _Bool replace,
             brbt_node* insert_out)
 {
   if (node == BRBT_NIL) {
@@ -354,13 +362,12 @@ insert_impl(struct brbt* tree,
 }
 
 brbt_node
-brbt_insert(struct brbt* tree, void* node_in, bool replace)
+brbt_insert(struct brbt* tree, void* node_in, _Bool replace)
 {
   assert(tree);
   assert(node_in);
 
   brbt_node out;
-
   tree->root = insert_impl(tree, tree->root, node_in, replace, &out);
   return out;
 }
@@ -433,7 +440,7 @@ move_red_right(struct brbt* tree, unsigned h)
 }
 
 static brbt_node
-delete_min_impl(struct brbt* tree, brbt_node h, bool free_node)
+delete_min_impl(struct brbt* tree, brbt_node h, _Bool free_node)
 {
   if (!tree)
     return 0;

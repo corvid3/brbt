@@ -1,9 +1,5 @@
 #pragma once
 
-#include <stdalign.h>
-#include <stdbool.h>
-#include <stddef.h>
-
 #define BRBT_NIL ((unsigned)-1)
 
 struct brbt;
@@ -22,7 +18,7 @@ struct brbt_bookkeeping_info
   union
   {
     brbt_node next_free;
-    bool red;
+    _Bool red;
   };
 };
 
@@ -57,6 +53,13 @@ typedef void (*brbt_policy_remove_hook)(struct brbt*,
                                         void* userdata,
                                         brbt_node);
 
+/* panic function called by brbt in case of internal failure
+ * internal source line is provided for debugging/bug reports
+ */
+typedef void (*brbt_abort)(struct brbt*,
+                           void* userdata,
+                           int internal_source_line);
+
 typedef void (*brbt_free)(struct brbt*,
                           void* userdata,
                           void* array,
@@ -82,6 +85,8 @@ struct brbt_policy
 {
   /* userdata to pass to the user policy functions */
   void* policy_data;
+
+  brbt_abort abort;
 
   /* hook function ran whenever a node is inserted */
   brbt_policy_insert_hook insert_hook;
@@ -111,21 +116,15 @@ struct brbt
   char* data_array;
   struct brbt_bookkeeping_info* bookkeeping_array;
 
-  /* should we invoke free() on the data array */
-  bool allocated_data_array;
-
-  /* should we invoke free() on the bookkeeping array */
-  bool allocated_bookkeeping_array;
-
   /* size of the user data structure
    * includes trailing padding
    */
-  size_t member_bytesize;
+  unsigned member_bytesize;
 
   /* byte offset into the user data structure
    * for where to find the key data
    */
-  size_t member_key_offset;
+  unsigned member_key_offset;
 
   /* number of allocated nodes */
   unsigned size;
@@ -159,9 +158,9 @@ extern struct brbt_policy brbt_default_policy;
  *      if null, the implementation will automatically resize the array
  */
 struct brbt
-brbt_create(size_t node_size,
-            size_t key_offset,
-            struct brbt_policy* policy,
+brbt_create(unsigned node_size,
+            unsigned key_offset,
+            struct brbt_policy policy,
             brbt_deleter deleter,
             brbt_comparator compare);
 
@@ -189,7 +188,7 @@ brbt_get(struct brbt* tree, brbt_node);
  *   that successive insert operations will return incrementing nodes indices
  */
 brbt_node
-brbt_insert(struct brbt* tree, void* node, bool replace);
+brbt_insert(struct brbt* tree, void* node, _Bool replace);
 
 /* deletes a node with a given key */
 void
@@ -214,8 +213,12 @@ brbt_minimum(struct brbt* tree, brbt_node);
 brbt_node
 brbt_root(struct brbt* tree);
 
-#ifndef BRBT_DEFAULT_POLICY
+#ifndef BRBT_NO_STDLIB
 #include <stdlib.h>
+
+#ifndef BRBT_DEFAULT_CAPACITY
+#define BRBT_DEFAULT_CAPACITY 64
+#endif
 
 static inline void
 brbt_default_policy_free(struct brbt* tree,
@@ -242,7 +245,7 @@ brbt_default_policy_resize(struct brbt* tree,
   unsigned old_cap = brbt_capacity(tree);
   unsigned new_cap = 0;
   if (old_cap == 0)
-    new_cap = 64;
+    new_cap = BRBT_DEFAULT_CAPACITY;
   else
     new_cap = old_cap * 1.5;
 
@@ -267,3 +270,13 @@ brbt_create_default_policy()
 }
 
 #endif
+
+/* helper combination function of find and get */
+static inline void*
+brbt_find_get(struct brbt* tree, void const* key)
+{
+  brbt_node idx = brbt_find(tree, key);
+  if (idx == BRBT_NIL)
+    return NULL;
+  return brbt_get(tree, idx);
+}
