@@ -214,6 +214,7 @@ brbt_node
 brbt_root(struct brbt* tree);
 
 #ifndef BRBT_NO_STDLIB
+#include <stdio.h>
 #include <stdlib.h>
 
 #ifndef BRBT_DEFAULT_CAPACITY
@@ -256,6 +257,15 @@ brbt_default_policy_resize(struct brbt* tree,
   return out;
 }
 
+static inline void
+brbt_default_abort(struct brbt* tree, void* userdata, int line_no)
+{
+  (void)tree;
+  (void)userdata;
+  fprintf(stderr, "BRBT INTERNAL ABORT: line %i\n", line_no);
+  abort();
+}
+
 static inline struct brbt_policy
 brbt_create_default_policy()
 {
@@ -263,6 +273,7 @@ brbt_create_default_policy()
   out.policy_data = 0;
   out.insert_hook = 0;
   out.remove_hook = 0;
+  out.abort = brbt_default_abort;
   out.resize = brbt_default_policy_resize;
   out.free = brbt_default_policy_free;
   out.select = 0;
