@@ -177,29 +177,39 @@ node_alloc(struct brbt* tree)
   return h;
 }
 
+static void
+clear_iterator(struct brbt* tree, [[maybe_unused]] void* user, brbt_node node)
+{
+  node_free(tree, node);
+}
+
 void
 brbt_clear(struct brbt* tree)
 {
   if (tree->size == 0)
     return;
 
-  /* clear all the nodes before the first free node */
-  for (brbt_node i = 0; i < tree->first_free; i++)
-    node_free(tree, i);
+  brbt_iterate(tree, clear_iterator, NULL);
+  tree->size = 0;
+  tree->root = BRBT_NIL;
 
-  /* for each free node, clear the nodes after it and
-   * before the next free node
-   */
+  // /* clear all the nodes before the first free node */
+  // for (brbt_node i = 0; i < tree->first_free; i++)
+  //   node_free(tree, i);
 
-  brbt_node current = tree->first_free;
-  while (current != BRBT_NIL) {
-    brbt_node until = nextfree(current);
-    if (until == BRBT_NIL)
-      until = tree->capacity;
+  // /* for each free node, clear the nodes after it and
+  //  * before the next free node
+  //  */
 
-    for (brbt_node i = current + 1; i < until; i++)
-      node_free(tree, i);
-  }
+  // brbt_node current = tree->first_free;
+  // while (current != BRBT_NIL) {
+  //   brbt_node until = nextfree(current);
+  //   if (until == BRBT_NIL)
+  //     until = tree->capacity;
+
+  //   for (brbt_node i = current + 1; i < until; i++)
+  //     node_free(tree, i);
+  // }
 }
 
 void

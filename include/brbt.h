@@ -184,8 +184,8 @@ void*
 brbt_get(struct brbt* tree, brbt_node);
 
 /* inserts a node with a key and returns its node index
- * if no delete operations are performed, then it is guaranteed
- *   that successive insert operations will return incrementing nodes indices
+ * if no delete operations are performed, then it is guaranteed that
+ * successive insert operations will return incrementing nodes indices
  */
 brbt_node
 brbt_insert(struct brbt* tree, void* node, _Bool replace);
