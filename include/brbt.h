@@ -138,13 +138,15 @@ struct brbt
 };
 
 #define brbt_usage(tree) ((tree).capacity * (tree)._type->membs)
+
+/* expects tree to be a pointer */
 #define brbt_for(tree, id, lambda)                                             \
   do {                                                                         \
     /* up to 2^32 node depth */                                                \
     unsigned stack[32][2];                                                     \
     unsigned si = 0;                                                           \
     stack[si][0] = 0;                                                          \
-    stack[si++][1] = tree->root;                                               \
+    stack[si++][1] = (tree)->root;                                             \
     while (si > 0) {                                                           \
       unsigned (*state)[2] = &stack[si - 1];                                   \
       if ((*state)[1] == BRBT_NIL) {                                           \
@@ -152,14 +154,16 @@ struct brbt
         continue;                                                              \
       }                                                                        \
       if ((*state)[0] == 0) {                                                  \
-        brbt_node lhs = brbt_left(tree, (*state)[1]);                          \
+        brbt_node lhs = brbt_left((tree), (*state)[1]);                        \
         (*state)[0] = 1;                                                       \
         stack[si][0] = 0;                                                      \
         stack[si++][1] = lhs;                                                  \
       } else {                                                                 \
         unsigned id = (*state)[1];                                             \
-        lambda;                                                                \
-        (*state)[1] = brbt_right(tree, (*state)[1]);                           \
+        {                                                                      \
+          lambda;                                                              \
+        }                                                                      \
+        (*state)[1] = brbt_right((tree), (*state)[1]);                         \
         (*state)[0] = 0;                                                       \
       }                                                                        \
     }                                                                          \
