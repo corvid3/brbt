@@ -143,28 +143,28 @@ struct brbt
 #define brbt_for(tree, id, lambda)                                             \
   do {                                                                         \
     /* up to 2^32 node depth */                                                \
-    unsigned stack[32][2];                                                     \
-    unsigned si = 0;                                                           \
-    stack[si][0] = 0;                                                          \
-    stack[si++][1] = (tree)->root;                                             \
-    while (si > 0) {                                                           \
-      unsigned (*state)[2] = &stack[si - 1];                                   \
-      if ((*state)[1] == BRBT_NIL) {                                           \
-        si--;                                                                  \
+    unsigned _brbt_stack[32][2];                                               \
+    unsigned _brbt_si = 0;                                                     \
+    _brbt_stack[_brbt_si][0] = 0;                                              \
+    _brbt_stack[_brbt_si++][1] = (tree)->root;                                 \
+    while (_brbt_si > 0) {                                                     \
+      unsigned (*_brbt_state)[2] = &_brbt_stack[_brbt_si - 1];                 \
+      if ((*_brbt_state)[1] == BRBT_NIL) {                                     \
+        _brbt_si--;                                                            \
         continue;                                                              \
       }                                                                        \
-      if ((*state)[0] == 0) {                                                  \
-        brbt_node lhs = brbt_left((tree), (*state)[1]);                        \
-        (*state)[0] = 1;                                                       \
-        stack[si][0] = 0;                                                      \
-        stack[si++][1] = lhs;                                                  \
+      if ((*_brbt_state)[0] == 0) {                                            \
+        brbt_node lhs = brbt_left((tree), (*_brbt_state)[1]);                  \
+        (*_brbt_state)[0] = 1;                                                 \
+        _brbt_stack[_brbt_si][0] = 0;                                          \
+        _brbt_stack[_brbt_si++][1] = lhs;                                      \
       } else {                                                                 \
-        unsigned id = (*state)[1];                                             \
+        unsigned id = (*_brbt_state)[1];                                       \
         {                                                                      \
           lambda;                                                              \
         }                                                                      \
-        (*state)[1] = brbt_right((tree), (*state)[1]);                         \
-        (*state)[0] = 0;                                                       \
+        (*_brbt_state)[1] = brbt_right((tree), (*_brbt_state)[1]);             \
+        (*_brbt_state)[0] = 0;                                                 \
       }                                                                        \
     }                                                                          \
   } while (0)
