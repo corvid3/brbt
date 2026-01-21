@@ -509,45 +509,16 @@ brbt_delete(struct brbt* tree, void* key)
   tree->root = delete_impl(tree, tree->root, key);
 }
 
-void
-brbt_iterate(struct brbt* tree, brbt_iterator iterate, void* userdata)
+brbt_node
+brbt_left(struct brbt* tree, brbt_node node)
 {
-  /* up to 2^32 node depth */
-  struct state
-  {
-    brbt_node node;
-    enum
-    {
-      LHS,
-      SELF,
-    } state;
-  } stack[32];
-  unsigned si = 0;
+  return left(node);
+}
 
-  if (tree->size == 0)
-    return;
-
-  stack[si].state = LHS;
-  stack[si++].node = tree->root;
-
-  while (si > 0) {
-    struct state* state = &stack[si - 1];
-    if (state->node == BRBT_NIL) {
-      si--;
-      continue;
-    }
-
-    if (state->state == LHS) {
-      brbt_node lhs = left(state->node);
-      state->state = SELF;
-      stack[si].state = LHS;
-      stack[si++].node = lhs;
-    } else {
-      iterate(tree, userdata, state->node);
-      state->node = right(state->node);
-      state->state = LHS;
-    }
-  }
+brbt_node
+brbt_right(struct brbt* tree, brbt_node node)
+{
+  return right(node);
 }
 
 brbt_node
