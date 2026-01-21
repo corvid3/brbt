@@ -18,9 +18,9 @@
 #define right(x) get_bk(tree, x)->right
 #define col(x) get_bk(tree, x)->red
 #define nextfree(x) get_bk(tree, x)->next_free
-#define assert(x)                                                              \
-  ((x) ? (void)(0)                                                             \
-       : tree->policy.abort(tree, tree->policy.policy_data, __LINE__))
+#define assert(x) ((x) ? (void)(0) : tree->policy->abort(tree, __LINE__))
+#define keyoff tree->type->keyoff
+#define membs tree->type->membs
 
 static inline struct brbt_bookkeeping_info*
 get_bk(struct brbt* tree, unsigned idx)
@@ -28,7 +28,7 @@ get_bk(struct brbt* tree, unsigned idx)
   assert(tree);
   assert(idx != BRBT_NIL);
 
-  return &tree->bookkeeping_array[idx];
+  return &tree->bk[idx];
 }
 
 static inline void*
@@ -37,7 +37,7 @@ get_key(struct brbt* tree, char* data)
   assert(tree);
   assert(data);
 
-  return &data[tree->member_key_offset];
+  return &data[keyoff];
 }
 
 void*
@@ -46,38 +46,26 @@ brbt_get(struct brbt* tree, brbt_node idx)
   assert(tree);
   assert(idx != BRBT_NIL);
 
-  return &tree->data_array[tree->member_bytesize * idx];
+  return &tree->ptr[membs * idx];
 }
 
 struct brbt
-brbt_create(unsigned member_bytesize,
-            unsigned key_offset,
-            struct brbt_policy policy,
-            brbt_deleter deleter,
-            brbt_comparator comparator)
+brbt_create(struct brbt_type const* type,
+            struct brbt_policy const* policy,
+            void* userdata)
 {
   struct brbt tree;
 
-  tree.member_bytesize = member_bytesize;
-  tree.member_key_offset = key_offset;
-
+  tree.ptr = NULL;
+  tree.bk = NULL;
   tree.size = 0;
   tree.capacity = 0;
+  tree.first_free = 0;
   tree.root = BRBT_NIL;
 
-  tree.deleter = deleter;
-  tree.comparator = comparator;
-
   tree.policy = policy;
-  tree.data_array = NULL;
-  tree.bookkeeping_array = NULL;
-  tree.first_free = 0;
-
-  ((member_bytesize != 0)
-     ? (void)(0)
-     : tree.policy.abort(&tree, tree.policy.policy_data, 54));
-  ((comparator) ? (void)(0)
-                : tree.policy.abort(&tree, tree.policy.policy_data, 57));
+  tree.type = type;
+  tree.userdata = userdata;
 
   return tree;
 }
@@ -99,31 +87,21 @@ node_free(struct brbt* tree, brbt_node h)
 {
   tree->size--;
 
-  if (tree->deleter)
-    tree->deleter(tree, h);
+  if (tree->type->deleter)
+    tree->type->deleter(tree, h);
 
-  if (tree->policy.remove_hook)
-    tree->policy.remove_hook(tree, tree->policy.policy_data, h);
+  if (tree->policy->remove_hook)
+    tree->policy->remove_hook(tree, h);
 
   if (tree->first_free == BRBT_NIL) {
     /* no other free nodes */
     tree->first_free = h;
     nextfree(h) = BRBT_NIL;
-  } else if (h < tree->first_free) {
+  } else {
     /* this node is before the first free node */
     nextfree(h) = tree->first_free;
     tree->first_free = h;
-  } else if (h > tree->first_free) {
-    /* this node is after the first free node */
-    brbt_node i = tree->first_free;
-
-    while (h > nextfree(i))
-      i = nextfree(i);
-
-    nextfree(h) = nextfree(i);
-    nextfree(i) = h;
-  } else
-    assert(1);
+  }
 
   return h;
 }
@@ -136,26 +114,25 @@ node_alloc(struct brbt* tree)
 
   if (tree->size >= tree->capacity) {
     /* try to reallocate */
-    if (tree->policy.resize) {
+    if (tree->policy->resize) {
       unsigned const old_cap = tree->capacity;
-      struct brbt_allocator_out out =
-        tree->policy.resize(tree,
-                            tree->policy.policy_data,
-                            tree->data_array,
-                            tree->bookkeeping_array);
-      tree->data_array = out.data_array;
-      tree->bookkeeping_array = out.bk_array;
+      struct brbt_allocator_out out = tree->policy->resize(tree, BRBT_GROW);
+      tree->ptr = out.data_array;
+      tree->bk = out.bk_array;
       tree->capacity = out.size;
       unsigned const new_cap = tree->capacity;
 
+      /* TODO: implement the -1u marker/init technique i use elsewhere
+       * as to amortize the initialization costs of
+       * allocating many nodes */
       for (unsigned i = old_cap; i < new_cap; i++) {
-        tree->bookkeeping_array[i].left = BRBT_NIL;
-        tree->bookkeeping_array[i].right = BRBT_NIL;
+        tree->bk[i].left = BRBT_NIL;
+        tree->bk[i].right = BRBT_NIL;
 
         if (i < tree->capacity - 1)
-          tree->bookkeeping_array[i].next_free = i + 1;
+          tree->bk[i].next_free = i + 1;
         else
-          tree->bookkeeping_array[i].next_free = BRBT_NIL;
+          tree->bk[i].next_free = BRBT_NIL;
       }
 
     } else {
@@ -164,8 +141,8 @@ node_alloc(struct brbt* tree)
        * if theres no free function, just assert false
        * (in the future, we should just fail insertion functions)
        */
-      assert(tree->policy.select);
-      node_free(tree, tree->policy.select(tree, tree->policy.policy_data));
+      assert(tree->policy->select);
+      node_free(tree, tree->policy->select(tree));
     }
   }
 
@@ -228,8 +205,7 @@ brbt_destroy(struct brbt* tree)
     follower = follower == BRBT_NIL ? 0 : nextfree(follower);
   }
 
-  tree->policy.free(
-    tree, tree->policy.policy_data, tree->data_array, tree->bookkeeping_array);
+  tree->policy->free(tree);
 }
 
 static inline int
@@ -239,7 +215,7 @@ compare(struct brbt* tree, brbt_node node, void const* key)
   assert(key);
 
   void* key_off = get_key(tree, brbt_get(tree, node));
-  return tree->comparator(key, key_off);
+  return tree->type->cmp(key, key_off);
 }
 
 #define compare(node, key) compare(tree, node, key)
@@ -320,10 +296,10 @@ new_node(struct brbt* tree, void* data_in)
   right(node) = BRBT_NIL;
 
   void* data = brbt_get(tree, node);
-  __builtin_memcpy(data, data_in, tree->member_bytesize);
+  __builtin_memcpy(data, data_in, membs);
 
-  if (tree->policy.insert_hook)
-    tree->policy.insert_hook(tree, tree->policy.policy_data, node);
+  if (tree->policy->insert_hook)
+    tree->policy->insert_hook(tree, node);
 
   return node;
 }
@@ -360,8 +336,8 @@ insert_impl(struct brbt* tree,
 
   if (cmp == 0) {
     if (replace) {
-      tree->deleter(tree, node);
-      __builtin_memcpy(brbt_get(tree, node), data, tree->member_bytesize);
+      tree->type->deleter(tree, node);
+      __builtin_memcpy(brbt_get(tree, node), data, membs);
     }
   } else if (cmp < 0)
     left(node) = insert_impl(tree, left(node), data, replace, insert_out);
@@ -533,24 +509,45 @@ brbt_delete(struct brbt* tree, void* key)
   tree->root = delete_impl(tree, tree->root, key);
 }
 
-static void
-iterate_impl(struct brbt* tree,
-             brbt_iterator iterator,
-             void* userdata,
-             unsigned node)
-{
-  if (node == BRBT_NIL)
-    return;
-
-  iterate_impl(tree, iterator, userdata, left(node));
-  iterator(tree, userdata, node);
-  iterate_impl(tree, iterator, userdata, right(node));
-}
-
 void
 brbt_iterate(struct brbt* tree, brbt_iterator iterate, void* userdata)
 {
-  iterate_impl(tree, iterate, userdata, tree->root);
+  /* up to 2^32 node depth */
+  struct state
+  {
+    brbt_node node;
+    enum
+    {
+      LHS,
+      SELF,
+    } state;
+  } stack[32];
+  unsigned si = 0;
+
+  if (tree->size == 0)
+    return;
+
+  stack[si].state = LHS;
+  stack[si++].node = tree->root;
+
+  while (si > 0) {
+    struct state* state = &stack[si - 1];
+    if (state->node == BRBT_NIL) {
+      si--;
+      continue;
+    }
+
+    if (state->state == LHS) {
+      brbt_node lhs = left(state->node);
+      state->state = SELF;
+      stack[si].state = LHS;
+      stack[si++].node = lhs;
+    } else {
+      iterate(tree, userdata, state->node);
+      state->node = right(state->node);
+      state->state = LHS;
+    }
+  }
 }
 
 brbt_node

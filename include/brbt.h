@@ -5,6 +5,12 @@
 struct brbt;
 typedef unsigned brbt_node;
 
+enum brbt_allocation_request
+{
+  BRBT_GROW,
+  BRBT_SHRINK,
+};
+
 enum brbt_node_flags : unsigned char
 {
   BRBT_NODE_FREE = 0b01,
@@ -37,55 +43,42 @@ typedef void (*brbt_deleter)(struct brbt*, brbt_node);
  * reallocated.
  * the function must return a valid node index to which node should be freed
  */
-typedef brbt_node (*brbt_policy_select)(struct brbt*, void* userdata);
+typedef brbt_node (*brbt_policy_select)(struct brbt*);
 
 /* hook to be ran whenever a node is inserted into the tree
  * allows one to maintain a bookkeeping list at an amortized cost
  */
-typedef void (*brbt_policy_insert_hook)(struct brbt*,
-                                        void* userdata,
-                                        brbt_node);
+typedef void (*brbt_policy_insert_hook)(struct brbt*, brbt_node);
 
 /* hook to be ran whenever a node is removed from the tree
  * allows one to maintain a bookkeeping list at an amortized cost
  */
-typedef void (*brbt_policy_remove_hook)(struct brbt*,
-                                        void* userdata,
-                                        brbt_node);
+typedef void (*brbt_policy_remove_hook)(struct brbt*, brbt_node);
 
 /* panic function called by brbt in case of internal failure
  * internal source line is provided for debugging/bug reports
  */
-typedef void (*brbt_abort)(struct brbt*,
-                           void* userdata,
-                           int internal_source_line);
+typedef void (*brbt_abort)(struct brbt*, int internal_source_line);
 
-typedef void (*brbt_free)(struct brbt*,
-                          void* userdata,
-                          void* array,
-                          struct brbt_bookkeeping_info* bk);
+typedef void (*brbt_free)(struct brbt*);
 
-typedef struct brbt_allocator_out (*brbt_page_allocator)(struct brbt*,
-                                                         void* userdata);
-
-typedef struct brbt_allocator_out (*brbt_reallocator)(
-  struct brbt*,
-  void* userdata,
-  void* array,
-  struct brbt_bookkeeping_info* bk);
+typedef struct brbt_allocator_out (
+  *brbt_reallocator)(struct brbt*, enum brbt_allocation_request);
 
 struct brbt_allocator_out
 {
   void* data_array;
   struct brbt_bookkeeping_info* bk_array;
   unsigned size;
+
+  /* tells the implementation that the underlying
+   * allocation was a realloc rather than a newly
+   * allocated array */
+  int realloc;
 };
 
 struct brbt_policy
 {
-  /* userdata to pass to the user policy functions */
-  void* policy_data;
-
   brbt_abort abort;
 
   /* hook function ran whenever a node is inserted */
@@ -107,24 +100,24 @@ struct brbt_policy
   brbt_policy_select select;
 };
 
+struct brbt_type
+{
+  /* member bytesize */
+  unsigned membs;
+  unsigned keyoff;
+  brbt_comparator cmp;
+  brbt_deleter deleter;
+};
+
 struct brbt
 {
   /* realistically void*,
    * but the alignment shouldnt really matter
    * if it ever becomes a problem, make an issue
    */
-  char* data_array;
-  struct brbt_bookkeeping_info* bookkeeping_array;
-
-  /* size of the user data structure
-   * includes trailing padding
-   */
-  unsigned member_bytesize;
-
-  /* byte offset into the user data structure
-   * for where to find the key data
-   */
-  unsigned member_key_offset;
+  char* ptr;
+  struct brbt_bookkeeping_info* bk;
+  void* userdata;
 
   /* number of allocated nodes */
   unsigned size;
@@ -135,34 +128,19 @@ struct brbt
   /* index to the root node
    * if == BRBT_NIL, then no root is specified
    */
-  unsigned root;
+  brbt_node root;
 
   /* first free node in the list */
   brbt_node first_free;
 
-  brbt_comparator comparator;
-  brbt_deleter deleter;
-
-  struct brbt_policy policy;
+  struct brbt_type const* type;
+  struct brbt_policy const* policy;
 };
 
-extern struct brbt_policy brbt_default_policy;
-
-/* bk : pointer to an array of struct brbt_bookkeeping_info[capacity]
- *      if null, then an array will be maintained within the implementation
- * data: pointer to an array of your data structure of length capacity
- *      if null, then an array will be maintained within the implementation
- * key_offset: byte offset into your data structure for where the key is stored
- * policy: what to do when we run out of space
- * capacity: size of the policy of bk array, in logical size
- *      if null, the implementation will automatically resize the array
- */
 struct brbt
-brbt_create(unsigned node_size,
-            unsigned key_offset,
-            struct brbt_policy policy,
-            brbt_deleter deleter,
-            brbt_comparator compare);
+brbt_create(struct brbt_type const* type,
+            struct brbt_policy const* policy,
+            void* userdata);
 
 void
 brbt_destroy(struct brbt*);
@@ -222,46 +200,48 @@ brbt_root(struct brbt* tree);
 #endif
 
 static inline void
-brbt_default_policy_free(struct brbt* tree,
-                         void* user,
-                         void* array,
-                         struct brbt_bookkeeping_info* bk)
+brbt_default_policy_free(struct brbt* tree)
 {
-  (void)tree;
-  (void)user;
-
-  free(array);
-  free(bk);
+  free(tree->ptr);
+  free(tree->bk);
 }
 
 static inline struct brbt_allocator_out
-brbt_default_policy_resize(struct brbt* tree,
-                           void* user,
-                           void* array,
-                           struct brbt_bookkeeping_info* bk)
+brbt_default_policy_resize(struct brbt* tree, enum brbt_allocation_request req)
 {
-  (void)user;
-
   struct brbt_allocator_out out;
   unsigned old_cap = brbt_capacity(tree);
   unsigned new_cap = 0;
-  if (old_cap == 0)
-    new_cap = BRBT_DEFAULT_CAPACITY;
-  else
-    new_cap = old_cap * 1.5;
 
-  out.bk_array = realloc(bk, sizeof *bk * new_cap);
-  out.data_array = realloc(array, tree->member_bytesize * new_cap);
+  switch (req) {
+    case BRBT_GROW:
+      if (old_cap == 0)
+        new_cap = BRBT_DEFAULT_CAPACITY;
+      else
+        new_cap = old_cap * 1.5;
+      out.realloc = 1;
+      break;
+
+    case BRBT_SHRINK:
+      tree->policy->abort(tree, __LINE__);
+      out.realloc = 0;
+  }
+
+  /* min of 32 */
+  new_cap = (new_cap < 32) ? 32 : new_cap;
+
+  out.bk_array =
+    realloc(tree->bk, sizeof(struct brbt_bookkeeping_info) * new_cap);
+  out.data_array = realloc(tree->ptr, tree->type->membs * new_cap);
   out.size = new_cap;
 
   return out;
 }
 
 static inline void
-brbt_default_abort(struct brbt* tree, void* userdata, int line_no)
+brbt_default_abort(struct brbt* tree, int line_no)
 {
   (void)tree;
-  (void)userdata;
   fprintf(stderr, "BRBT INTERNAL ABORT: line %i\n", line_no);
   abort();
 }
@@ -270,7 +250,6 @@ static inline struct brbt_policy
 brbt_create_default_policy()
 {
   struct brbt_policy out;
-  out.policy_data = 0;
   out.insert_hook = 0;
   out.remove_hook = 0;
   out.abort = brbt_default_abort;
