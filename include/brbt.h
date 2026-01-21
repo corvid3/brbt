@@ -137,7 +137,7 @@ struct brbt
   struct brbt_policy const* _policy;
 };
 
-#define brbt_usage(tree) (tree->capacity * tree->_type->membs)
+#define brbt_usage(tree) ((tree).capacity * (tree)._type->membs)
 
 struct brbt
 brbt_create(struct brbt_type const* type,
