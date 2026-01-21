@@ -154,19 +154,13 @@ node_alloc(struct brbt* tree)
   return h;
 }
 
-static void
-clear_iterator(struct brbt* tree, [[maybe_unused]] void* user, brbt_node node)
-{
-  node_free(tree, node);
-}
-
 void
 brbt_clear(struct brbt* tree)
 {
   if (tree->size == 0)
     return;
 
-  brbt_iterate(tree, clear_iterator, NULL);
+  brbt_for(tree, i, { node_free(tree, i); });
   tree->size = 0;
   tree->root = BRBT_NIL;
 
