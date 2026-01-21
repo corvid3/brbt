@@ -167,7 +167,7 @@ struct brbt
         (*state)[0] = 0;                                                       \
       }                                                                        \
     }                                                                          \
-  } while (0);
+  } while (0)
 
 struct brbt
 brbt_create(struct brbt_type const* type,
