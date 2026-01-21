@@ -133,9 +133,11 @@ struct brbt
   /* first free node in the list */
   brbt_node first_free;
 
-  struct brbt_type const* type;
-  struct brbt_policy const* policy;
+  struct brbt_type const* _type;
+  struct brbt_policy const* _policy;
 };
+
+#define brbt_usage(tree) (tree->capacity * tree->_type->membs)
 
 struct brbt
 brbt_create(struct brbt_type const* type,
@@ -223,7 +225,7 @@ brbt_default_policy_resize(struct brbt* tree, enum brbt_allocation_request req)
       break;
 
     case BRBT_SHRINK:
-      tree->policy->abort(tree, __LINE__);
+      tree->_policy->abort(tree, __LINE__);
       out.realloc = 0;
   }
 
@@ -232,7 +234,7 @@ brbt_default_policy_resize(struct brbt* tree, enum brbt_allocation_request req)
 
   out.bk_array =
     realloc(tree->bk, sizeof(struct brbt_bookkeeping_info) * new_cap);
-  out.data_array = realloc(tree->ptr, tree->type->membs * new_cap);
+  out.data_array = realloc(tree->ptr, tree->_type->membs * new_cap);
   out.size = new_cap;
 
   return out;

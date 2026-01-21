@@ -18,9 +18,9 @@
 #define right(x) get_bk(tree, x)->right
 #define col(x) get_bk(tree, x)->red
 #define nextfree(x) get_bk(tree, x)->next_free
-#define assert(x) ((x) ? (void)(0) : tree->policy->abort(tree, __LINE__))
-#define keyoff tree->type->keyoff
-#define membs tree->type->membs
+#define assert(x) ((x) ? (void)(0) : tree->_policy->abort(tree, __LINE__))
+#define keyoff tree->_type->keyoff
+#define membs tree->_type->membs
 
 static inline struct brbt_bookkeeping_info*
 get_bk(struct brbt* tree, unsigned idx)
@@ -63,8 +63,8 @@ brbt_create(struct brbt_type const* type,
   tree.first_free = 0;
   tree.root = BRBT_NIL;
 
-  tree.policy = policy;
-  tree.type = type;
+  tree._policy = policy;
+  tree._type = type;
   tree.userdata = userdata;
 
   return tree;
@@ -87,11 +87,11 @@ node_free(struct brbt* tree, brbt_node h)
 {
   tree->size--;
 
-  if (tree->type->deleter)
-    tree->type->deleter(tree, h);
+  if (tree->_type->deleter)
+    tree->_type->deleter(tree, h);
 
-  if (tree->policy->remove_hook)
-    tree->policy->remove_hook(tree, h);
+  if (tree->_policy->remove_hook)
+    tree->_policy->remove_hook(tree, h);
 
   if (tree->first_free == BRBT_NIL) {
     /* no other free nodes */
@@ -114,9 +114,9 @@ node_alloc(struct brbt* tree)
 
   if (tree->size >= tree->capacity) {
     /* try to reallocate */
-    if (tree->policy->resize) {
+    if (tree->_policy->resize) {
       unsigned const old_cap = tree->capacity;
-      struct brbt_allocator_out out = tree->policy->resize(tree, BRBT_GROW);
+      struct brbt_allocator_out out = tree->_policy->resize(tree, BRBT_GROW);
       tree->ptr = out.data_array;
       tree->bk = out.bk_array;
       tree->capacity = out.size;
@@ -141,8 +141,8 @@ node_alloc(struct brbt* tree)
        * if theres no free function, just assert false
        * (in the future, we should just fail insertion functions)
        */
-      assert(tree->policy->select);
-      node_free(tree, tree->policy->select(tree));
+      assert(tree->_policy->select);
+      node_free(tree, tree->_policy->select(tree));
     }
   }
 
@@ -205,7 +205,7 @@ brbt_destroy(struct brbt* tree)
     follower = follower == BRBT_NIL ? 0 : nextfree(follower);
   }
 
-  tree->policy->free(tree);
+  tree->_policy->free(tree);
 }
 
 static inline int
@@ -215,7 +215,7 @@ compare(struct brbt* tree, brbt_node node, void const* key)
   assert(key);
 
   void* key_off = get_key(tree, brbt_get(tree, node));
-  return tree->type->cmp(key, key_off);
+  return tree->_type->cmp(key, key_off);
 }
 
 #define compare(node, key) compare(tree, node, key)
@@ -298,8 +298,8 @@ new_node(struct brbt* tree, void* data_in)
   void* data = brbt_get(tree, node);
   __builtin_memcpy(data, data_in, membs);
 
-  if (tree->policy->insert_hook)
-    tree->policy->insert_hook(tree, node);
+  if (tree->_policy->insert_hook)
+    tree->_policy->insert_hook(tree, node);
 
   return node;
 }
@@ -336,7 +336,7 @@ insert_impl(struct brbt* tree,
 
   if (cmp == 0) {
     if (replace) {
-      tree->type->deleter(tree, node);
+      tree->_type->deleter(tree, node);
       __builtin_memcpy(brbt_get(tree, node), data, membs);
     }
   } else if (cmp < 0)
